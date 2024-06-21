@@ -9,19 +9,19 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const loggedIn = await getLoggedInUser();
-  if (!loggedIn) redirect("/sign-in");
+  const loggedInUser = await getLoggedInUser();
+  if (!loggedInUser) redirect("/sign-in");
 
   return (
     <main className="w-full h-screen font-inter flex">
       {/* Sidebar for desktop */}
-      <Sidebar user={loggedIn} />
+      <Sidebar user={loggedInUser} />
       {/* Sidebar for mobil */}
       <div className="flex flex-col size-full">
         <div className="root-layout">
           <Image src="icons/logo.svg" alt="logo" width={30} height={30} />
           <div>
-            <MobileNav user={loggedIn} />
+            <MobileNav user={loggedInUser} />
           </div>
         </div>
         {children}
