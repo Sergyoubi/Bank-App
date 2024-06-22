@@ -14,6 +14,7 @@ import CustomInput from "./CustomInput";
 import { Loader2 } from "lucide-react"; // lucide-react is already installed with shadcn
 import { useRouter } from "next/navigation";
 import { signIn, signUp } from "@/lib/actions/user.actions";
+import PlaidLink from "./PlaidLink";
 
 const AuthForm = ({ type }: { type: string }) => {
   // type = "sign-in" or "sign-up"
@@ -89,7 +90,10 @@ const AuthForm = ({ type }: { type: string }) => {
         </div>
       </header>
       {user ? (
-        <div className="flex flex-col gap-4">{/* Plaid Bank Link */}</div>
+        <div className="flex flex-col gap-4">
+          {/*Link to Plaid*/}
+          <PlaidLink user={user} variant="primary" />
+        </div>
       ) : (
         <>
           <Form {...form}>
