@@ -1,6 +1,6 @@
 "use server";
 
-import { ID } from "node-appwrite";
+import { ID, Query } from "node-appwrite";
 import { createAdminClient, createSessionClient } from "../appwrite";
 import { cookies } from "next/headers";
 import { encryptId, extractCustomerIdFromUrl, parseStringify } from "../utils";
@@ -19,6 +19,23 @@ const {
   APPWRITE_USER_COLLECTION_ID: USER_COLLECTION_ID,
   APPWRITE_BANK_COLLECTION_ID: BANK_COLLECTION_ID,
 } = process.env;
+
+//get user info from Appwrite
+export const getUserInfo = async ({ userId }: getUserInfoProps) => {
+  try {
+    const { database } = await createAdminClient();
+
+    const user = await database.listDocuments(
+      DATABASE_ID!,
+      USER_COLLECTION_ID!,
+      [Query.equal("userId", [userId])]
+    );
+
+    return parseStringify(user.documents[0]);
+  } catch (error) {
+    console.error(`Error while getting Bank from getBank(): ${error}`);
+  }
+};
 
 // here we extract the password from props data at begining! That way userData doesn't have password
 export const signUp = async ({ password, ...userData }: SignUpParams) => {
@@ -62,13 +79,13 @@ export const signUp = async ({ password, ...userData }: SignUpParams) => {
     );
 
     const session = await account.createEmailPasswordSession(email, password);
-
     cookies().set("appwrite-session", session.secret, {
       path: "/",
       httpOnly: true,
       sameSite: "strict",
       secure: true,
     });
+
     //we stringify the object first, because in NextJs you can't pass large objects from NextJS server (actions) to client(front-end)
     return parseStringify(newUser);
   } catch (error) {
@@ -80,9 +97,16 @@ export const signIn = async ({ email, password }: signInProps) => {
   // email & password props are sent/passed from AuthForm.tsx
   try {
     const { account } = await createAdminClient();
-    const response = await account.createEmailPasswordSession(email, password);
+    const session = await account.createEmailPasswordSession(email, password);
+    cookies().set("appwrite-session", session.secret, {
+      path: "/",
+      httpOnly: true,
+      sameSite: "strict",
+      secure: true,
+    });
+    const user = await getUserInfo({ userId: session.userId });
 
-    return parseStringify(response);
+    return parseStringify(user);
   } catch (error) {
     console.error(`Error from signIn(): ${error}`);
   }
@@ -91,11 +115,16 @@ export const signIn = async ({ email, password }: signInProps) => {
 export async function getLoggedInUser() {
   try {
     const { account } = await createSessionClient();
-    const user = await account.get();
+    //this fn gets user from session
+    const result = await account.get();
+    // this fn gets user from DB where we pass "account id" from session
+    const user = await getUserInfo({ userId: result.$id });
 
     return parseStringify(user);
   } catch (error) {
-    console.error(`Error! Can't get logged in user:  ${error}`);
+    console.error(
+      `Error from getLoggedInUser() ! Can't get logged in user:  ${error}`
+    );
     return null;
   }
 }
@@ -125,6 +154,72 @@ export const createLinkToken = async (user: User) => {
     return parseStringify({ linkToken: response.data.link_token });
   } catch (error) {
     console.error(`Error from createLinkToken(): ${error}`);
+  }
+};
+
+// this fn() exchanges our existing token for a token that llows us to do Banking stuff(money transfer,...)
+export const exchangePublicToken = async ({
+  publicToken,
+  user,
+}: exchangePublicTokenProps) => {
+  try {
+    const response = await plaidClient.itemPublicTokenExchange({
+      public_token: publicToken,
+    });
+    const accessToken = response.data.access_token;
+    const itemId = response.data.item_id;
+    //Get account informations from plaid using access token
+    const accountResponse = await plaidClient.accountsGet({
+      access_token: accessToken,
+    });
+    const accountData = accountResponse.data.accounts[0];
+
+    //now we create a processor token for Dwolla
+    //Dwolla is a payment processor we'll be using for our money through plaid on our platform
+    const request: ProcessorTokenCreateRequest = {
+      access_token: accessToken,
+      account_id: accountData.account_id,
+      processor: "dwolla" as ProcessorTokenCreateRequestProcessorEnum,
+    };
+    const processorTokenResponse = await plaidClient.processorTokenCreate(
+      request
+    );
+    const processorToken = processorTokenResponse.data.processor_token;
+
+    // create a funding source URL for the account using Dwolla customer ID, processor Token and Bank name
+    // addFundingSource() is a server action coming from Dwolla. This fn() connects payment processing (Dwolla) functionality to
+    // different bank accounts (from plaid) to send or receive fund$
+    const fundingSourceUrl = await addFundingSource({
+      dwollaCustomerId: user.dwollaCustomerId,
+      processorToken,
+      bankName: accountData.name,
+    });
+
+    // if the funding source URL is not created, throw an error
+    if (!fundingSourceUrl) throw Error;
+
+    //then, we create a bank account using the user ID, item ID, account ID, access token, founding source url and sharable ID
+    await createBankAccount({
+      userId: user.$id,
+      bankId: itemId,
+      accountId: accountData.account_id,
+      accessToken,
+      fundingSourceUrl,
+      sharableId: encryptId(accountData.account_id),
+    });
+
+    // After creating a bank accout, we revalidate the path to reflect changes which allow us to see the new account we creted
+    // (This function allows you to purge cached data on-demand for a specific path)
+    revalidatePath("/");
+
+    // return a success message
+    return parseStringify({
+      publicTokenExchange: "complete",
+    });
+  } catch (error) {
+    console.error(
+      `Error occured from exchangePublicToken(), while creating exchange token: "${error}"`
+    );
   }
 };
 
@@ -158,68 +253,35 @@ export const createBankAccount = async ({
   } catch (error) {}
 };
 
-// this fn() exchanges our existing token for a token that llows us to do Banking stuff(money transfer,...)
-export const exchangePublicToken = async ({
-  publicToken,
-  user,
-}: exchangePublicTokenProps) => {
+export const getBanks = async ({ userId }: getBanksProps) => {
   try {
-    const response = await plaidClient.itemPublicTokenExchange({
-      public_token: publicToken,
-    });
-    const accessToken = response.data.access_token;
-    const itemId = response.data.item_id;
-    //Get account informations from plaid using access token
-    const accountResponse = await plaidClient.accountsGet({
-      access_token: accessToken,
-    });
-    const accountData = accountResponse.data.accounts[0];
-
-    //now we create a processor token for Dwolla
-    //Dwolla is a payment processor we'll be using for our money through plaid on our platform
-    const request: ProcessorTokenCreateRequest = {
-      access_token: accessToken,
-      account_id: accountData.account_id,
-      processor: "dwolla" as ProcessorTokenCreateRequestProcessorEnum,
-    };
-    const processorTokenResponse = await plaidClient.processorTokenCreate(
-      request
+    const { database } = await createAdminClient();
+    // this ensure that we only query banks from a specific user
+    const banks = await database.listDocuments(
+      DATABASE_ID!,
+      BANK_COLLECTION_ID!,
+      [Query.equal("userId", [userId])]
     );
-    const processorToken = processorTokenResponse.data.processor_token;
 
-    // create a funding source URL for the account using Dwolla customer ID, processor Token and Bank name
-    // addFundingSource() is aserver action coming from Dwolla. This fn() connects payment processing (Dwolla) functionality to # Bank accounts to send or receive fund$
-    const fundingSourceUrl = await addFundingSource({
-      dwollaCustomerId: user.dwollaCustomerId,
-      processorToken,
-      bankName: accountData.name,
-    });
-
-    // if the funding source URL is not created, throw an error
-    if (!fundingSourceUrl) throw Error;
-
-    //then, we create a bank account using the user ID, item ID, account ID, access token, founding source url and sharable ID
-    await createBankAccount({
-      userId: user.$id,
-      bankId: itemId,
-      accountId: accountData.account_id,
-      accessToken,
-      fundingSourceUrl,
-      sharableId: encryptId(accountData.account_id),
-    });
-
-    // After creating a bank accout, we revalidate the path to reflect changes which allow us to see the new account we creted
-    // (This function allows you to purge cached data on-demand for a specific path)
-    revalidatePath("/");
-
-    // return a success message
-    return parseStringify({
-      publicTokenExchange: "complete",
-    });
+    return parseStringify(banks.documents);
   } catch (error) {
-    console.error(
-      `Error occured from exchangePublicToken(), while creating exchange token: "${error}"`
+    console.error(`Error while getting Banks from getBanks(): ${error}`);
+  }
+};
+
+export const getBank = async ({ documentId }: getBankProps) => {
+  try {
+    const { database } = await createAdminClient();
+
+    const bank = await database.listDocuments(
+      DATABASE_ID!,
+      BANK_COLLECTION_ID!,
+      [Query.equal("$id", [documentId])]
     );
+
+    return parseStringify(bank.documents[0]);
+  } catch (error) {
+    console.error(`Error while getting Bank from getBank(): ${error}`);
   }
 };
 
