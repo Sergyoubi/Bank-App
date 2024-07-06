@@ -7,12 +7,26 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { transactionCategoryStyles } from "@/constants";
 import {
+  cn,
   formatAmount,
   formatDateTime,
   getTransactionStatus,
   removeSpecialCharacters,
 } from "@/lib/utils";
+
+const { borderColor, backgroundColor, textColor, chipBackgroundColor } =
+  transactionCategoryStyles.default;
+
+const CategoryBadge = ({ category }: CategoryBadgeProps) => {
+  return (
+    <div className={cn("category-badge", borderColor, chipBackgroundColor)}>
+      <div className={cn("size-2 rounded-full", backgroundColor)} />
+      <p className={cn("text-[12px] font-medium", textColor)}>{category}</p>
+    </div>
+  );
+};
 
 const TransactionsTable = ({ transactions }: TransactionTableProps) => {
   return (
@@ -48,7 +62,6 @@ const TransactionsTable = ({ transactions }: TransactionTableProps) => {
                   </h1>
                 </div>
               </TableCell>
-
               <TableCell
                 className={`pl-2 pr-10 font-semibold ${
                   isDebit || amount[0] === "-"
@@ -58,19 +71,17 @@ const TransactionsTable = ({ transactions }: TransactionTableProps) => {
               >
                 {isDebit ? `-${amount}` : isCredit ? amount : amount}
               </TableCell>
-
-              <TableCell className="pl-2 pr-10">{status}</TableCell>
-
+              <TableCell className="pl-2 pr-10">
+                <CategoryBadge category={status} />
+              </TableCell>
               <TableCell className="pl-2 pr-10 min-w-32">
                 {formatDateTime(new Date(t.date)).dateTime}
               </TableCell>
-
               <TableCell className="pl-2 pr-10 capitalize min-w-24">
                 {t.paymentChannel}
               </TableCell>
-
               <TableCell className="pl-2 pr-10 max-md:hidden">
-                {t.category}
+                <CategoryBadge category={t.category} />
               </TableCell>
             </TableRow>
           );
