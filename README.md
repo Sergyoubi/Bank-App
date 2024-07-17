@@ -4,6 +4,8 @@
 
 ![Screen Shot 2024-07-17 at 21 40 22](https://github.com/user-attachments/assets/9251b353-bc16-45e0-b1b0-5468a2643c0c)
 
+![Screen Shot 2024-07-17 at 21 43 20](https://github.com/user-attachments/assets/5f76bf86-125f-4b7d-97b1-a3304b5a83df)
+
 
 This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
 
